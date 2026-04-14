@@ -1,0 +1,75 @@
+#!/bin/bash
+# Findsock - Find socket owners by port or inode
+# Debug network connections at the socket level
+
+set -e
+
+PORT=""
+INODE=""
+VERBOSE=false
+
+usage() {
+    cat << EOF
+FindSock - Find socket owners by port or inode
+
+USAGE:
+    findsock [options]
+
+OPTIONS:
+    -p, --port <PORT>     Find by port number
+    -i, --inode <INODE>   Find by inode
+    -v, --verbose         Verbose
+    -h, --help            Show help
+
+EXAMPLES:
+    findsock -p 8080
+    findsock -i 12345
+
+EOF
+}
+
+find_by_port() {
+    local port="$1"
+    echo "🔍 Looking for port $port..."
+    echo ""
+
+    # Find socket inode
+    inode=$(ss -tnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+
+    if [[ -z "$inode" ]]; then
+        echo "No socket found for port $port"
+        return
+    fi
+
+    # Find process
+    for dir in /proc/*/fd; do
+        if [[ -L "$dir/0" ]]; then
+            target=$(readlink "$dir/0" 2>/dev/null || true)
+            if [[ "$target" == "socket:["*"]" ]]; then
+                this_inode=$(echo "$target" | grep -oP '\[[0-9]+\]' | tr -d '[]')
+                if [[ "$this_inode" == "$inode" ]]; then
+                    pid=$(basename "$(dirname "$dir")")
+                    name=$(cat "/proc/$pid/comm" 2>/dev/null || echo "unknown")
+                    echo "Found: PID=$pid ($name)"
+                fi
+            fi
+        fi
+    done
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -p|--port) PORT="$2"; shift 2 ;;
+        -i|--inode) INODE="$2"; shift 2 ;;
+        -v|--verbose) VERBOSE=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) shift ;;
+    esac
+done
+
+if [[ -n "$PORT" ]]; then
+    find_by_port "$PORT"
+else
+    ss -tnp 2>/dev/null | head -20
+fi
+EOF
